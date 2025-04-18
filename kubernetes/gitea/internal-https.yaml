@@ -1,0 +1,110 @@
+#
+# With this configuration, other pods in the cluster can reach https://registry.gitea.svc.cluster.local/ (port 443)
+# This is important so that the act_runner docker commands can talk to the registry.
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-conf
+  namespace: gitea
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes  1;
+    events {
+      worker_connections  10240;
+    }
+    http {
+      server {
+        listen              443 ssl;
+        server_name         registry.gitea.svc.cluster.local;
+        ssl_certificate     /etc/nginx/tls.crt;
+        ssl_certificate_key /etc/nginx/tls.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
+    
+        # We are pushing docker images here
+        client_max_body_size 100M;
+    
+        location / {
+          proxy_pass http://gitea-http.gitea.svc.cluster.local:3000;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto https;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  namespace: gitea
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.14.2
+          ports:
+            # containerPort is the port that the pod exposes, and the app listens to
+            - containerPort: 443
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: nginx-certs
+              mountPath: /etc/nginx/ca.crt
+              subPath: ca.crt
+              readOnly: true
+            - name: nginx-certs
+              mountPath: /etc/nginx/tls.crt
+              subPath: tls.crt
+              readOnly: true
+            - name: nginx-certs
+              mountPath: /etc/nginx/tls.key
+              subPath: tls.key
+              readOnly: true
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: nginx-conf
+            items:
+              - key: nginx.conf
+                path: nginx.conf
+        - name: nginx-certs
+          secret:
+            secretName: gitea-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # This needs to be internally visible as registry.gitea.svc.cluster.local:443
+  name: registry
+  namespace: gitea
+spec:
+  selector:
+    app: nginx
+  ports:
+    - name: https
+      protocol: TCP
+      # port is the port that the service listens to and forwards the traffic to targetPort
+      port: 443
+      # targetPort is the port that the container is listening to
+      targetPort: 443

@@ -1,0 +1,43 @@
+name: Build and push demoapp
+run-name: Build and push demoapp
+env:
+  DEMOAPP_IMAGE_NAME: ${{ vars.REGISTRY_NAME }}/${{ gitea.repository }}/demoapp
+  EXTERNAL_IMAGE_NAME: gitea.local/${{ gitea.repository }}/demoapp
+  DOCKER_TLS_VERIFY: 0
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  run_tests:
+    name: Run tests and audit dependencies
+    uses: ./.gitea/workflows/jobs/run-tests.yaml
+
+  build_demoapp_snapshot:
+    name: Build demoapp image
+    runs-on: ubuntu-latest
+    container: catthehacker/ubuntu:act-latest
+    steps:
+      # Kludge to disable SSL verify for Git so that self-signed certificates can be used
+      - name: Allow self-signed certificates for Git
+        run: git config --global http.sslVerify false
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Build and push docker image with latest tag
+        working-directory: ./demoapp
+        run: |
+          echo "Log in to Docker registry ${{ vars.REGISTRY_NAME }}"
+          echo "${{ secrets.REGISTRY_TOKEN }}" | DOCKER_TLS_VERIFY=0 docker --tlsverify=false login ${{ vars.REGISTRY_NAME }} --username ${{ secrets.REGISTRY_USERNAME }} --password-stdin
+          echo "Building image with Docker daemon at $DOCKER_HOST"
+          docker --tls buildx build --progress plain --load -t $DEMOAPP_IMAGE_NAME .
+          echo "Tagging image"
+          docker --tls tag $DEMOAPP_IMAGE_NAME $DEMOAPP_IMAGE_NAME:latest
+          docker --tls tag $DEMOAPP_IMAGE_NAME $DEMOAPP_IMAGE_NAME:${{ gitea.sha }}
+          docker --tls tag $DEMOAPP_IMAGE_NAME $EXTERNAL_IMAGE_NAME:latest
+          docker --tls tag $DEMOAPP_IMAGE_NAME $EXTERNAL_IMAGE_NAME:${{ gitea.sha }}
+          echo "Push image to registry, image: $DEMOAPP_IMAGE_NAME"
+          DOCKER_TLS_VERIFY=0 docker --tlsverify=false push --all-tags $DEMOAPP_IMAGE_NAME

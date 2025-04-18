@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo-ingress
+  namespace: default
+  annotations:
+    cert-manager.io/cluster-issuer: k3s-ca-issuer
+spec:
+  tls:
+    - hosts:
+        - echo.local
+      secretName: echo-tls
+  rules:
+    - host: echo.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo-server
+                port:
+                  number: 80

@@ -1,0 +1,120 @@
+# Install gitea using helm chart
+# See https://gitea.com/gitea/helm-gitea
+#
+# This file can be used with helm using the option -f gitea-values.yaml
+#
+# NOTE! Make sure these steps have been done BEFORE starting the helm install:
+#  - cert-manager has been installed
+#  - the gitea-tls secret has been created (kubectl -n gitea apply -f gitea-tls-secret-deployment.yaml)
+#
+# TL;DR:
+#   helm repo add gitea-charts https://dl.gitea.com/charts/
+#   helm repo update
+#   helm install gitea gitea-charts/gitea --namespace gitea -f gitea-values.yaml
+#
+# If you need to update values in this configuration, the new values can be applied with
+#   helm upgrade gitea gitea-charts/gitea --namespace gitea -f gitea-values.yaml
+#
+# If everything went well,
+#
+
+replicaCount: 1
+
+image:
+  tag: latest
+
+ingress:
+  enabled: true
+  className: "traefik"
+  annotations:
+    cert-manager.io/cluster-issuer: k3s-ca-issuer
+  hosts:
+    - host: gitea.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - gitea.gitea.svc.cluster.local
+        - gitea.local
+        - gitea
+        - registry.gitea.svc.cluster.local
+      secretName: gitea-tls
+
+service:
+  http:
+    type: ClusterIP
+    port: 3000
+    clusterIP:
+  ssh:
+    type: NodePort
+    port: 22
+    nodePort: 30022
+
+# Use pqsql instead
+# persistence:
+  # enabled: true
+  # size: 20Gi
+  # storageClass: local-path
+
+#postgresql:
+#  enabled: true
+#  primary:
+#    persistence:
+#        size: 20Gi
+
+gitea:
+  admin:
+    username: admin
+    password: supersecure
+    email: git@gitea.local
+
+  config:
+    server:
+      DOMAIN: gitea.local
+      ROOT_URL: https://gitea.local/
+    repository:
+      ENABLE_PUSH_CREATE_USER: true
+    packages:
+      ENABLED: true
+    actions:
+      ENABLED: true
+    mailer:
+      ENABLED: true
+      FROM: git@gitea.local
+      PROTOCOL: smtp
+      SMTP_ADDR: mailpit.mailpit.svc.cluster.local
+      SMTP_PORT: 1025
+      FORCE_TRUST_SERVER_CERT: true
+      #SKIP_VERIFY: true
+      #USER:     # NOT NEEDED WITH mailpit
+      #PASSWD:   # NOT NEEDED WITH mailpit
+
+#  livenessProbe:
+#    enabled: true
+#    httpGet:
+#      path: /api/healthz
+#      port: http
+#    initialDelaySeconds: 200
+#    timeoutSeconds: 5
+#    periodSeconds: 10
+#    successThreshold: 1
+#    failureThreshold: 10
+
+# If act_runner installation is attempted, then the registration token must have been created as a secret
+# But the catch-22 is that the secret can be obtained only after gitea is running...
+#act_runner:
+#  enabled: true
+#  runnerName: "default-runner"
+#  envs:
+#    - name: GITEA_INSTANCE_URL
+#      value: https://gitea.local
+#    - name: GITEA_RUNNER_REGISTRATION_TOKEN
+#      valueFrom:
+#        secretKeyRef:
+#          name: runner-secret
+#          key: token
+#  rbac:
+#    create: true
+#  serviceAccount:
+#    create: true

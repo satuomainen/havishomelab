@@ -1,0 +1,16 @@
+#
+# This is the final step: before this you have first (see README.md)
+# - added the secret k3s-ca-key-pair in cert-manager namespace
+# - installed the CRD and cert-manager
+#
+# Note that this is a global thing so no namespace needs to be specified
+#
+# kubectl apply -f cluster-issuer-deployment.yaml
+#
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: k3s-ca-issuer
+spec:
+  ca:
+    secretName: k3s-ca-key-pair

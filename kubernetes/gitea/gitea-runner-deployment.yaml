@@ -1,0 +1,219 @@
+#
+# Install Gitea act_runner. Do this only after everything else works.
+#
+# Preparations:
+# - make sure the gitea-tls secret is in place
+# - obtain runner registration token via Gitea UI
+# - create a secret runner-secret into gitea namespace:
+#   kubectl -n gitea create secret generic runner-secret --from-literal=token=REGISTRATION_TOKEN_HERE
+#
+# Install the act_runner:
+#   kubectl -n gitea apply -f gitea-runner-deployment.yaml
+#
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitea-act-runner-config
+  namespace: gitea
+  annotations:
+    reloader.stakater.com/auto: "true"
+data:
+  config.yaml: |-
+    log:
+      # The level of logging can be trace, debug, info, warn, error, fatal
+      level: debug
+
+    runner:
+      # Where to store the registration result.
+      file: .runner
+      # Execute how many tasks concurrently at the same time.
+      capacity: 1
+      # Extra environment variables to run jobs.
+      envs:
+        #A_TEST_ENV_NAME_1: a_test_env_value_1
+        #A_TEST_ENV_NAME_2: a_test_env_value_2
+      # Extra environment variables to run jobs from a file.
+      # It will be ignored if it's empty or the file doesn't exist.
+      env_file: .env
+      # The timeout for a job to be finished.
+      # Please note that the Gitea instance also has a timeout (3h by default) for the job.
+      # So the job could be stopped by the Gitea instance if it's timeout is shorter than this.
+      timeout: 30m
+      # Whether skip verifying the TLS certificate of the Gitea instance.
+      insecure: true
+      # The timeout for fetching the job from the Gitea instance.
+      fetch_timeout: 5s
+      # The interval for fetching the job from the Gitea instance.
+      fetch_interval: 2s
+      # The labels of a runner are used to determine which jobs the runner can run, and how to run them.
+      # Like: "macos-arm64:host" or "ubuntu-latest:docker://gitea/runner-images:ubuntu-latest"
+      # Find more images provided by Gitea at https://gitea.com/gitea/runner-images .
+      # If it's empty when registering, it will ask for inputting labels.
+      # If it's empty when execute `daemon`, will use labels in `.runner` file.
+      labels:
+        - "ubuntu-latest:docker://gitea/runner-images:ubuntu-latest"
+        - "ubuntu-22.04:docker://gitea/runner-images:ubuntu-22.04"
+        - "ubuntu-20.04:docker://gitea/runner-images:ubuntu-20.04"
+
+    cache:
+      # Enable cache server to use actions/cache.
+      enabled: true
+      # The directory to store the cache data.
+      # If it's empty, the cache data will be stored in $HOME/.cache/actcache.
+      dir: ""
+      # The host of the cache server.
+      # It's not for the address to listen, but the address to connect from job containers.
+      # So 0.0.0.0 is a bad choice, leave it empty to detect automatically.
+      host: ""
+      # The port of the cache server.
+      # 0 means to use a random available port.
+      port: 0
+      # The external cache server URL. Valid only when enable is true.
+      # If it's specified, act_runner will use this URL as the ACTIONS_CACHE_URL rather than start a server by itself.
+      # The URL should generally end with "/".
+      external_server: ""
+
+    container:
+      # Specifies the network to which the container will connect.
+      # Could be host, bridge or the name of a custom network.
+      # If it's empty, act_runner will create a network automatically.
+      network: "host"
+      # Whether to use privileged mode or not when launching task containers (privileged mode is required for Docker-in-Docker).
+      privileged: false
+      # And other options to be used when the container is started (eg, --add-host=my.gitea.url:host-gateway).
+      options: "--add-host=docker:host-gateway -v /certs:/certs -e DOCKER_HOST=tcp://docker:2376 -e DOCKER_CERT_PATH=/certs/client -e DOCKER_TLS_CERTDIR=/certs -e DOCKER_TLS_VERIFY=0"
+      # The parent directory of a job's working directory.
+      # NOTE: There is no need to add the first '/' of the path as act_runner will add it automatically.
+      # If the path starts with '/', the '/' will be trimmed.
+      # For example, if the parent directory is /path/to/my/dir, workdir_parent should be path/to/my/dir
+      # If it's empty, /workspace will be used.
+      # workdir_parent:
+      # Volumes (including bind mounts) can be mounted to containers. Glob syntax is supported, see https://github.com/gobwas/glob
+      # You can specify multiple volumes. If the sequence is empty, no volumes can be mounted.
+      # For example, if you only allow containers to mount the `data` volume and all the json files in `/src`, you should change the config to:
+      # valid_volumes:
+      #   - data
+      #   - /src/*.json
+      # If you want to allow any volume, please use the following configuration:
+      # valid_volumes:
+      #   - '**'
+      valid_volumes:
+        - '**'
+      #  - /certs
+      # overrides the docker client host with the specified one.
+      # If it's empty, act_runner will find an available docker host automatically.
+      # If it's "-", act_runner will find an available docker host automatically, but the docker host won't be mounted to the job containers and service containers.
+      # If it's not empty or "-", the specified docker host will be used. An error will be returned if it doesn't work.
+      # docker_host: ""
+      # Pull docker image(s) even if already present
+      # force_pull: true
+      # Rebuild docker image(s) even if already present
+      # force_rebuild: false
+
+    host:
+    # The parent directory of a job's working directory.
+    # If it's empty, $HOME/.cache/act/ will be used.
+    # workdir_parent:
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: gitea-act-runner-dind
+  name: gitea-act-runner-dind
+  namespace: gitea
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitea-act-runner-dind
+  serviceName: gitea-act-runner-dind
+  template:
+    metadata:
+      labels:
+        app: gitea-act-runner-dind
+    spec:
+      restartPolicy: Always
+      containers:
+        - name: runner
+          image: gitea/act_runner:nightly
+          command: ["sh", "-c", "while ! nc -z localhost 2376 </dev/null; do echo 'waiting for docker daemon...'; sleep 5; done; /sbin/tini -- run.sh"]
+
+          env:
+            - name: DOCKER_HOST
+              value: tcp://localhost:2376
+            - name: DOCKER_CERT_PATH
+              value: /certs/client
+            - name: DOCKER_TLS_VERIFY
+              value: "1"
+            - name: CONFIG_FILE
+              value: /config.yaml
+            - name: GITEA_INSTANCE_URL
+              value: "http://gitea-http.gitea.svc.cluster.local:3000"
+            - name: GITEA_RUNNER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: GITEA_RUNNER_REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: runner-secret
+                  key: token
+
+          volumeMounts:
+            - name: docker-certs
+              mountPath: /certs
+            - name: gitea-runner-storage
+              mountPath: /data
+            - name: config
+              mountPath: /config.yaml
+              subPath: config.yaml
+            - name: gitea-certs
+              subPath: ca.crt
+              mountPath: /etc/docker/certs.d/registry.gitea.svc.cluster.local/ca.crt
+
+        - name: daemon
+          image: docker:dind
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: /certs
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: docker-certs
+              mountPath: /certs
+            - name: gitea-certs
+              subPath: ca.crt
+              mountPath: /etc/docker/certs.d/registry.gitea.svc.cluster.local/ca.crt
+
+      volumes:
+        - name: docker-certs
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: gitea-act-runner-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+        - name: gitea-certs
+          secret:
+            secretName: gitea-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
+
+  volumeClaimTemplates:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: gitea-runner-storage
+        namespace: gitea
+      spec:
+        storageClassName: local-path
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: "1Gi"

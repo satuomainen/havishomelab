@@ -1,0 +1,88 @@
+#
+# These manifests assume that there is an organization called havis and this repository
+# belongs to that organization.
+#
+# To apply: kubectl -n demoapp apply -f demoapp.yaml
+# To delete: kubectl -n demoapp delete -f demoapp.yaml
+#
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demoapp
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: demoapp-tls
+  namespace: demoapp
+spec:
+  secretName: demoapp-tls
+  dnsNames:
+    - demoapp.local
+  issuerRef:
+    name: k3s-ca-issuer
+    kind: ClusterIssuer
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demoapp-server
+  namespace: demoapp
+  labels:
+    app: demoapp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demoapp-server
+  template:
+    metadata:
+      namespace: demoapp
+      labels:
+        app: demoapp-server
+    spec:
+      containers:
+        - name: demoapp
+          image: gitea.local/havis/homelab/demoapp:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demoapp-server
+  namespace: demoapp
+spec:
+  ports:
+    - port: 80
+      targetPort: 3000
+  selector:
+    app: demoapp-server
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demoapp-ingress
+  namespace: demoapp
+  annotations:
+    cert-manager.io/cluster-issuer: "k3s-ca-issuer"
+spec:
+  tls:
+    - hosts:
+        - demoapp.local
+      secretName: demoapp-tls
+  rules:
+    - host: demoapp.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demoapp-server
+                port:
+                  number: 80
+
+      

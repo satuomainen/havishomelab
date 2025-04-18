@@ -6,8 +6,8 @@ const buildApp = () => {
     });
 
     app.get('/', async (request, reply) => {
-        reply.type('application/json').code(200)
-        return { hello: 'world' }
+        reply.type('application/json').code(200);
+        return { hello: 'world' };
     });
 
     return app;
