@@ -2,13 +2,16 @@
 # These manifests assume that there is an organization called havis and this repository
 # belongs to that organization.
 #
+# CREATE NAMESPACE FIRST: kubectl create namespace demoapp
+#
 # To apply: kubectl -n demoapp apply -f demoapp.yaml
 # To delete: kubectl -n demoapp delete -f demoapp.yaml
 #
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: demoapp
+---
+#apiVersion: v1
+#kind: Namespace
+#metadata:
+#  name: demoapp
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
